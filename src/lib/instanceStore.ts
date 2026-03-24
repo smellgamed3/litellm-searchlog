@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import type { LiteLLMInstance } from "@/types";
@@ -6,7 +7,46 @@ import type { LiteLLMInstance } from "@/types";
 // 实例配置持久化文件路径
 // 优先使用环境变量 DATA_DIR（Docker 部署时推荐设为 /app/data），
 // 未设置时回退至项目根目录（本地开发场景保持兼容）
-const DATA_DIR = process.env.DATA_DIR ?? process.cwd();
+const PREFERRED_DATA_DIR = process.env.DATA_DIR ?? process.cwd();
+const FALLBACK_DATA_DIR = path.join(os.tmpdir(), "litellm-searchlog-data");
+
+function isDirWritable(dir: string): boolean {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.accessSync(dir, fs.constants.R_OK | fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveDataDir(): string {
+  if (isDirWritable(PREFERRED_DATA_DIR)) {
+    return PREFERRED_DATA_DIR;
+  }
+
+  if (isDirWritable(FALLBACK_DATA_DIR)) {
+    const preferredFile = path.join(PREFERRED_DATA_DIR, "instances.json");
+    const fallbackFile = path.join(FALLBACK_DATA_DIR, "instances.json");
+
+    try {
+      if (fs.existsSync(preferredFile) && !fs.existsSync(fallbackFile)) {
+        fs.copyFileSync(preferredFile, fallbackFile);
+      }
+    } catch {
+      // 忽略迁移失败，继续使用 fallback 路径
+    }
+
+    console.warn(
+      `[instanceStore] DATA_DIR 不可写，已回退到临时目录: ${FALLBACK_DATA_DIR}`
+    );
+    return FALLBACK_DATA_DIR;
+  }
+
+  return PREFERRED_DATA_DIR;
+}
+
+const DATA_DIR = resolveDataDir();
 const DATA_FILE = path.join(DATA_DIR, "instances.json");
 
 /** 从文件中读取所有实例配置，读取失败时返回空数组 */

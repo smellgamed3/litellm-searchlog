@@ -5,6 +5,13 @@ import {
 } from "@/lib/instanceStore";
 import type { LiteLLMInstancePublic } from "@/types";
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Unknown error";
+}
+
 export async function GET() {
   const instances = getAllInstances();
   const publicInstances: LiteLLMInstancePublic[] = instances.map((inst) => ({
@@ -21,39 +28,46 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { name, baseUrl, adminKey } = body as {
-    name?: string;
-    baseUrl?: string;
-    adminKey?: string;
-  };
+  try {
+    const body = await req.json();
+    const { name, baseUrl, adminKey } = body as {
+      name?: string;
+      baseUrl?: string;
+      adminKey?: string;
+    };
 
-  if (!name || !baseUrl || !adminKey) {
+    if (!name || !baseUrl || !adminKey) {
+      return NextResponse.json(
+        { error: "name, baseUrl, and adminKey are required" },
+        { status: 400 }
+      );
+    }
+
+    // 规范化 baseUrl（移除末尾斜杠）
+    const normalizedUrl = baseUrl.replace(/\/$/, "");
+
+    const instance = addInstance({
+      name,
+      baseUrl: normalizedUrl,
+      adminKey,
+    });
+
+    const publicInstance: LiteLLMInstancePublic = {
+      id: instance.id,
+      name: instance.name,
+      baseUrl: instance.baseUrl,
+      adminKeyMasked:
+        instance.adminKey.length > 8
+          ? instance.adminKey.slice(0, 4) + "****" + instance.adminKey.slice(-4)
+          : "****",
+      createdAt: instance.createdAt,
+    };
+
+    return NextResponse.json(publicInstance, { status: 201 });
+  } catch (error) {
     return NextResponse.json(
-      { error: "name, baseUrl, and adminKey are required" },
-      { status: 400 }
+      { error: `Failed to create instance: ${getErrorMessage(error)}` },
+      { status: 500 }
     );
   }
-
-  // 规范化 baseUrl（移除末尾斜杠）
-  const normalizedUrl = baseUrl.replace(/\/$/, "");
-
-  const instance = addInstance({
-    name,
-    baseUrl: normalizedUrl,
-    adminKey,
-  });
-
-  const publicInstance: LiteLLMInstancePublic = {
-    id: instance.id,
-    name: instance.name,
-    baseUrl: instance.baseUrl,
-    adminKeyMasked:
-      instance.adminKey.length > 8
-        ? instance.adminKey.slice(0, 4) + "****" + instance.adminKey.slice(-4)
-        : "****",
-    createdAt: instance.createdAt,
-  };
-
-  return NextResponse.json(publicInstance, { status: 201 });
 }
