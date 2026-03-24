@@ -15,10 +15,9 @@ import {
   Coins,
   Copy,
   DollarSign,
-  Hash,
   MessageSquare,
   Bot,
-  FileJson,
+  Wrench,
   CheckCheck,
   XCircle,
 } from "lucide-react";
@@ -41,8 +40,8 @@ interface AssistantOutput {
 
 function formatDuration(start: string, end: string): string {
   const ms = new Date(end).getTime() - new Date(start).getTime();
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(3)} s`;
 }
 
 function formatTime(isoString: string): string {
@@ -94,19 +93,13 @@ function hasContent(value: unknown): boolean {
 
 /**
  * 尝试从 messages 字段或 proxy_server_request.messages 中提取请求消息数组。
- *
- * LiteLLM 已知问题：普通 completion 调用的 messages 字段在数据库中始终为空 {}，
- * 实际消息存储在 proxy_server_request（原始请求体）里。
- * 参见：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/spend_tracking/spend_tracking_utils.py
  */
 function extractMessages(log: SpendLog): unknown[] | null {
-  // 首先尝试 messages 字段
   const parsedMessages = parseField(log.messages);
   if (Array.isArray(parsedMessages) && parsedMessages.length > 0) {
     return parsedMessages;
   }
 
-  // 回退：从 proxy_server_request 中提取
   const parsedProxyReq = parseField(log.proxy_server_request);
   if (parsedProxyReq && typeof parsedProxyReq === "object" && !Array.isArray(parsedProxyReq)) {
     const proxyMessages = (parsedProxyReq as Record<string, unknown>).messages;
@@ -116,6 +109,29 @@ function extractMessages(log: SpendLog): unknown[] | null {
   }
 
   return null;
+}
+
+/**
+ * 从 proxy_server_request.tools 中提取工具名称列表。
+ * 优先使用 OpenAI 格式 { type: "function", function: { name } }，
+ * 当工具对象没有 function.name 时才回退到旧格式 { name }。
+ */
+function extractTools(proxyReq: unknown): string[] | null {
+  if (!proxyReq || typeof proxyReq !== "object" || Array.isArray(proxyReq)) return null;
+  const req = proxyReq as Record<string, unknown>;
+  const tools = req.tools;
+  if (!Array.isArray(tools) || tools.length === 0) return null;
+  return tools.map((t: unknown) => {
+    if (t && typeof t === "object") {
+      const tool = t as Record<string, unknown>;
+      if (tool.function && typeof tool.function === "object") {
+        const fn = tool.function as Record<string, unknown>;
+        if (typeof fn.name === "string") return fn.name;
+      }
+      if (typeof tool.name === "string") return tool.name;
+    }
+    return "unknown";
+  });
 }
 
 /**
@@ -135,7 +151,6 @@ function extractAssistantOutput(response: unknown): AssistantOutput | null {
 
   const content = typeof msgObj.content === "string" ? msgObj.content : null;
 
-  // 提取 tool_calls（函数调用）
   let toolCalls: AssistantOutput["toolCalls"];
   if (Array.isArray(msgObj.tool_calls) && msgObj.tool_calls.length > 0) {
     toolCalls = msgObj.tool_calls.map((tc: unknown) => {
@@ -166,14 +181,19 @@ function extractAssistantOutput(response: unknown): AssistantOutput | null {
   return { content, toolCalls };
 }
 
-/** 复制文本到剪贴板，返回 Promise<boolean> */
+/** 按 token 比例计算某部分费用（单位：美元） */
+function calcTokenCost(totalSpend: number, tokens: number, totalTokens: number): number {
+  if (totalTokens <= 0) return 0;
+  return (totalSpend * tokens) / totalTokens;
+}
+
+
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
       return true;
     }
-    // 非安全上下文回退方案
     const el = document.createElement("textarea");
     el.value = text;
     el.style.position = "fixed";
@@ -189,16 +209,50 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-/** 面板折叠头：仿 Datadog 风格，含图标、标签、指标和操作按钮 */
-function PanelHeader({
+/** 通用可折叠区域头部 */
+function SectionHeader({
+  isCollapsed,
+  onToggle,
+  children,
+  right,
+}: {
+  isCollapsed: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-muted/50 transition-colors"
+      onClick={onToggle}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-muted-foreground flex-shrink-0">
+          {isCollapsed ? (
+            <ChevronRight className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5" />
+          )}
+        </span>
+        {children}
+      </div>
+      {right && (
+        <div className="flex-shrink-0 text-sm" onClick={(e) => e.stopPropagation()}>
+          {right}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Input / Output 子面板头部 */
+function SubPanelHeader({
   icon,
   label,
   tokens,
   cost,
   isCollapsed,
-  rawView,
-  onToggleCollapse,
-  onToggleRaw,
+  onToggle,
   onCopy,
   copied,
 }: {
@@ -207,86 +261,68 @@ function PanelHeader({
   tokens?: number;
   cost?: number;
   isCollapsed: boolean;
-  rawView: boolean;
-  onToggleCollapse: () => void;
-  onToggleRaw?: () => void;
+  onToggle: () => void;
   onCopy: () => void;
   copied: boolean;
 }) {
   return (
     <div
-      className="flex items-center justify-between px-4 py-2.5 bg-muted/30 border-b cursor-pointer select-none hover:bg-muted/50 transition-colors"
-      onClick={onToggleCollapse}
+      className="flex items-center justify-between px-3 py-2.5 bg-muted/20 border-b cursor-pointer select-none hover:bg-muted/40 transition-colors"
+      onClick={onToggle}
     >
-      {/* 左侧：折叠箭头 + 图标 + 标签 + 指标 */}
-      <div className="flex items-center gap-3 min-w-0">
-        <span className="flex-shrink-0 text-muted-foreground">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-muted-foreground flex-shrink-0">
           {isCollapsed ? (
             <ChevronRight className="h-3.5 w-3.5" />
           ) : (
             <ChevronDown className="h-3.5 w-3.5" />
           )}
         </span>
-        <span className="flex-shrink-0 text-muted-foreground">{icon}</span>
+        <span className="text-muted-foreground flex-shrink-0">{icon}</span>
         <span className="font-medium text-sm">{label}</span>
         {tokens !== undefined && tokens > 0 && (
-          <span className="text-xs text-muted-foreground hidden sm:inline">
+          <span className="text-xs text-muted-foreground">
             Tokens: {tokens.toLocaleString()}
           </span>
         )}
-        {cost !== undefined && cost > 0 && (
-          <span className="text-xs text-muted-foreground hidden sm:inline">
-            ${cost.toFixed(6)}
+        {cost !== undefined && (
+          <span className="text-xs text-muted-foreground">
+            Cost: ${cost.toFixed(6)}
           </span>
         )}
       </div>
-      {/* 右侧：切换视图 + 复制按钮 */}
-      <div className="flex items-center gap-1 flex-shrink-0">
-        {onToggleRaw && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs gap-1"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleRaw();
-            }}
-          >
-            <FileJson className="h-3 w-3" />
-            {rawView ? "对话视图" : "原始 JSON"}
-          </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6 flex-shrink-0"
+        onClick={(e) => {
+          e.stopPropagation();
+          onCopy();
+        }}
+        title="复制到剪贴板"
+      >
+        {copied ? (
+          <CheckCheck className="h-3.5 w-3.5 text-emerald-500" />
+        ) : (
+          <Copy className="h-3.5 w-3.5" />
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCopy();
-          }}
-          title="复制到剪贴板"
-        >
-          {copied ? (
-            <CheckCheck className="h-3.5 w-3.5 text-emerald-500" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
-          )}
-        </Button>
-      </div>
+      </Button>
     </div>
   );
 }
 
 export function LogDetail({ log, index }: LogDetailProps) {
   const [expanded, setExpanded] = useState(false);
-  // 输入/输出面板折叠状态
+  // 各可折叠区域状态
+  const [costCollapsed, setCostCollapsed] = useState(true);
+  const [toolsCollapsed, setToolsCollapsed] = useState(true);
+  const [reqRespCollapsed, setReqRespCollapsed] = useState(false);
+  const [metaCollapsed, setMetaCollapsed] = useState(true);
+  // Input / Output 子面板折叠状态
   const [inputCollapsed, setInputCollapsed] = useState(false);
   const [outputCollapsed, setOutputCollapsed] = useState(false);
-  // 元数据/请求体折叠状态
-  const [metaCollapsed, setMetaCollapsed] = useState(true);
-  // 原始 JSON 视图切换（输入 / 输出各自独立）
-  const [rawInputView, setRawInputView] = useState(false);
-  const [rawOutputView, setRawOutputView] = useState(false);
+  // 共享的 Pretty / JSON 视图切换（作用于整个 Request & Response 区域）
+  const [prettyView, setPrettyView] = useState(true);
   // 复制成功反馈
   const [copiedInput, setCopiedInput] = useState(false);
   const [copiedOutput, setCopiedOutput] = useState(false);
@@ -306,8 +342,17 @@ export function LogDetail({ log, index }: LogDetailProps) {
   const parsedProxyReq = parseField(log.proxy_server_request);
   const proxyReqHasContent = hasContent(parsedProxyReq);
 
+  // 从 proxy_server_request 中提取工具列表
+  const toolNames = extractTools(parsedProxyReq);
+  const calledToolCount = assistantOutput?.toolCalls?.length ?? 0;
+
   // 状态判断
   const isFailure = log.status === "failure";
+
+  // 获取 LiteLLM Overhead（优先 log 直接字段，回退 metadata）
+  const litellmOverhead =
+    log.litellm_overhead_time_ms ??
+    (log.metadata?.litellm_overhead_time_ms as number | undefined);
 
   const storePromptsHint = (
     <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
@@ -358,7 +403,6 @@ export function LogDetail({ log, index }: LogDetailProps) {
               <Clock className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-sm font-medium">{formatTime(log.startTime)}</span>
               <span className="text-xs text-muted-foreground">{formatDate(log.startTime)}</span>
-              {/* 成功/失败状态指示 */}
               {isFailure ? (
                 <span className="flex items-center gap-0.5 text-xs text-destructive">
                   <XCircle className="h-3 w-3" />
@@ -404,186 +448,321 @@ export function LogDetail({ log, index }: LogDetailProps) {
       {expanded && (
         <>
           <Separator />
-          <CardContent className="pt-4 space-y-4">
-            {/* 基本元数据：调用类型、Token 用量、用户 */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
-                  Call Type
-                </p>
-                <p className="text-sm font-medium">{log.call_type || "—"}</p>
+          <CardContent className="pt-4 pb-4 space-y-3">
+            {/* 统计摘要 */}
+            {(log.prompt_tokens !== undefined || log.completion_tokens !== undefined) && (
+              <p className="text-sm text-muted-foreground px-1">
+                {log.prompt_tokens?.toLocaleString() ?? "—"} prompt tokens,{" "}
+                {log.completion_tokens?.toLocaleString() ?? "—"} completion tokens
+              </p>
+            )}
+
+            {/* 时间 / 缓存信息网格 */}
+            <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-sm px-1">
+              <div className="flex items-baseline gap-2">
+                <span className="text-muted-foreground min-w-[130px]">Duration:</span>
+                <span className="font-medium">{formatDuration(log.startTime, log.endTime)}</span>
               </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
-                  Prompt Tokens
-                </p>
-                <p className="text-sm font-medium">
-                  {log.prompt_tokens?.toLocaleString() ?? "—"}
-                </p>
+              <div className="flex items-baseline gap-2">
+                <span className="text-muted-foreground min-w-[130px]">Cache Hit:</span>
+                {log.cache_hit !== undefined && log.cache_hit !== null ? (
+                  <Badge
+                    variant="outline"
+                    className={
+                      String(log.cache_hit).toLowerCase() === "true"
+                        ? "text-emerald-600 border-emerald-300 bg-emerald-50"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    {String(log.cache_hit)}
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
               </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
-                  Completion Tokens
-                </p>
-                <p className="text-sm font-medium">
-                  {log.completion_tokens?.toLocaleString() ?? "—"}
-                </p>
+              {litellmOverhead !== undefined && (
+                <div className="flex items-baseline gap-2">
+                  <span className="text-muted-foreground min-w-[130px]">LiteLLM Overhead:</span>
+                  <span className="font-medium">{litellmOverhead.toFixed(2)} ms</span>
+                </div>
+              )}
+              <div className="flex items-baseline gap-2">
+                <span className="text-muted-foreground min-w-[130px]">Start Time:</span>
+                <span className="font-mono text-xs">{log.startTime}</span>
               </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
-                  User
-                </p>
-                <p className="text-sm font-medium truncate">{log.user || "—"}</p>
+              <div className="flex items-baseline gap-2">
+                <span className="text-muted-foreground min-w-[130px]">End Time:</span>
+                <span className="font-mono text-xs">{log.endTime}</span>
               </div>
             </div>
 
-            {/* ── 两栏并排：Input / Output ── */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* ── 输入面板 ── */}
-              <div className="rounded-lg border overflow-hidden">
-                <PanelHeader
-                  icon={<MessageSquare className="h-3.5 w-3.5" />}
-                  label="Input"
-                  tokens={log.prompt_tokens}
-                  isCollapsed={inputCollapsed}
-                  rawView={rawInputView}
-                  onToggleCollapse={() => setInputCollapsed((v) => !v)}
-                  /* 仅当有原始请求体时提供 JSON 视图切换 */
-                  onToggleRaw={proxyReqHasContent ? () => setRawInputView((v) => !v) : undefined}
-                  onCopy={handleCopyInput}
-                  copied={copiedInput}
-                />
-                {!inputCollapsed && (
-                  <div className="p-3 max-h-[480px] overflow-auto">
-                    {rawInputView && proxyReqHasContent ? (
-                      <JsonViewer data={parsedProxyReq} initialExpanded={false} />
-                    ) : messages !== null ? (
-                      <ChatMessages messages={messages as Array<{ role: string; content: unknown; tool_calls?: unknown[] }>} />
-                    ) : (
-                      <div className="flex items-start gap-2 text-muted-foreground text-sm bg-muted/40 rounded-md p-3">
-                        <MessageSquare className="h-4 w-4 mt-0.5 flex-shrink-0" />
+            {/* Cost Breakdown（可折叠） */}
+            <div className="rounded-lg border overflow-hidden">
+              <SectionHeader
+                isCollapsed={costCollapsed}
+                onToggle={() => setCostCollapsed((v) => !v)}
+                right={
+                  <span className="font-medium">
+                    Total: ${(log.spend ?? 0).toFixed(8)}
+                  </span>
+                }
+              >
+                <span className="font-semibold text-sm">Cost Breakdown</span>
+              </SectionHeader>
+              {!costCollapsed && (
+                <div className="px-6 py-4 space-y-2 text-sm border-t">
+                  {log.total_tokens > 0 ? (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">
+                          Input ({log.prompt_tokens?.toLocaleString()} tokens)
+                        </span>
                         <span>
-                          请求消息未存储。请在 LiteLLM 配置中启用{" "}
-                          {storePromptsHint}。
+                          ${calcTokenCost(log.spend, log.prompt_tokens ?? 0, log.total_tokens).toFixed(8)}
                         </span>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* ── 输出面板 ── */}
-              <div className="rounded-lg border overflow-hidden">
-                <PanelHeader
-                  icon={<Bot className="h-3.5 w-3.5" />}
-                  label="Output"
-                  tokens={log.completion_tokens}
-                  cost={log.spend}
-                  isCollapsed={outputCollapsed}
-                  rawView={rawOutputView}
-                  onToggleCollapse={() => setOutputCollapsed((v) => !v)}
-                  /* 仅当有结构化响应时提供 JSON 视图切换 */
-                  onToggleRaw={hasPrettyOutput ? () => setRawOutputView((v) => !v) : undefined}
-                  onCopy={handleCopyOutput}
-                  copied={copiedOutput}
-                />
-                {!outputCollapsed && (
-                  <div className="p-3 max-h-[480px] overflow-auto">
-                    {responseHasContent ? (
-                      rawOutputView || !hasPrettyOutput ? (
-                        <JsonViewer data={parsedResponse} initialExpanded={true} />
-                      ) : (
-                        <>
-                          {/* 助手文本回复 */}
-                          {assistantOutput?.content !== null && assistantOutput?.content !== undefined && (
-                            <ChatMessages
-                              messages={[{ role: "assistant", content: assistantOutput.content }]}
-                            />
-                          )}
-                          {/* 函数调用（tool_calls） */}
-                          {assistantOutput?.toolCalls && assistantOutput.toolCalls.length > 0 && (
-                            <div className="mt-3 space-y-2">
-                              {assistantOutput.toolCalls.map((tc, i) => (
-                                <div
-                                  key={tc.id || i}
-                                  className="rounded-md border border-purple-200 bg-purple-50 dark:bg-purple-950/30 dark:border-purple-800 overflow-hidden"
-                                >
-                                  <div className="flex items-center gap-2 px-3 py-1.5 border-b border-purple-200 dark:border-purple-800">
-                                    <span className="text-xs font-semibold px-1.5 py-0.5 rounded-sm uppercase tracking-wide text-purple-700 bg-purple-100 dark:text-purple-300 dark:bg-purple-900/50">
-                                      tool_call
-                                    </span>
-                                    <span className="font-mono text-xs font-medium">{tc.name}</span>
-                                    {tc.id && (
-                                      <span className="font-mono text-xs text-muted-foreground ml-auto truncate max-w-[120px]">
-                                        {tc.id}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="p-2">
-                                    <JsonViewer data={tc.arguments} initialExpanded={true} />
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </>
-                      )
-                    ) : (
-                      <div className="flex items-start gap-2 text-muted-foreground text-sm bg-muted/40 rounded-md p-3">
-                        <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">
+                          Output ({log.completion_tokens?.toLocaleString()} tokens)
+                        </span>
                         <span>
-                          响应未存储。请在 LiteLLM 配置中启用{" "}
-                          {storePromptsHint}。
+                          ${calcTokenCost(log.spend, log.completion_tokens ?? 0, log.total_tokens).toFixed(8)}
                         </span>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                      <Separator />
+                      <div className="flex justify-between font-medium">
+                        <span>Total</span>
+                        <span>${(log.spend ?? 0).toFixed(8)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-muted-foreground italic">
+                      Total: ${(log.spend ?? 0).toFixed(8)}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* ── 元数据 + 请求体（合并为一个可折叠区域） ── */}
-            {(log.metadata && Object.keys(log.metadata).length > 0) || proxyReqHasContent ? (
+            {/* Tools（可折叠，仅当 proxy_server_request 中有 tools 时显示） */}
+            {toolNames && toolNames.length > 0 && (
               <div className="rounded-lg border overflow-hidden">
-                {/* 折叠头 */}
-                <div
-                  className="flex items-center gap-2 px-4 py-2.5 bg-muted/30 border-b cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => setMetaCollapsed((v) => !v)}
+                <SectionHeader
+                  isCollapsed={toolsCollapsed}
+                  onToggle={() => setToolsCollapsed((v) => !v)}
                 >
-                  <span className="text-muted-foreground">
-                    {metaCollapsed ? (
+                  <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="font-semibold text-sm">Tools</span>
+                  <span className="text-sm text-muted-foreground">
+                    {toolNames.length} provided, {calledToolCount} called
+                  </span>
+                  <span className="text-muted-foreground mx-0.5">•</span>
+                  <span
+                    className="text-sm text-muted-foreground truncate max-w-[300px] sm:max-w-[500px]"
+                    title={toolNames.join(", ")}
+                  >
+                    {toolNames.slice(0, 5).join(", ")}
+                    {toolNames.length > 5 && "..."}
+                  </span>
+                </SectionHeader>
+                {!toolsCollapsed && (
+                  <div className="px-4 py-3 border-t">
+                    <div className="flex flex-wrap gap-1.5">
+                      {toolNames.map((name, i) => (
+                        <Badge key={i} variant="secondary" className="font-mono text-xs">
+                          {name}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Request & Response（可折叠，顶层含 Pretty / JSON 切换） */}
+            <div className="rounded-lg border overflow-hidden">
+              <div
+                className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-muted/50 transition-colors"
+                onClick={() => setReqRespCollapsed((v) => !v)}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground flex-shrink-0">
+                    {reqRespCollapsed ? (
                       <ChevronRight className="h-3.5 w-3.5" />
                     ) : (
                       <ChevronDown className="h-3.5 w-3.5" />
                     )}
                   </span>
-                  <Hash className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="font-medium text-sm">详细信息（Metadata &amp; Request Body）</span>
+                  <span className="font-semibold text-sm">Request &amp; Response</span>
                 </div>
-                {!metaCollapsed && (
-                  <div className="p-4 space-y-4">
-                    {/* 元数据 */}
-                    {log.metadata && Object.keys(log.metadata).length > 0 && (
-                      <div>
-                        <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
-                          Metadata
-                        </p>
-                        <JsonViewer data={log.metadata} initialExpanded={true} />
-                      </div>
-                    )}
-                    {/* 原始请求体 */}
-                    {proxyReqHasContent && (
-                      <div>
-                        <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
-                          Request Body
-                        </p>
-                        <JsonViewer data={parsedProxyReq} initialExpanded={false} />
+                {/* Pretty / JSON 切换（阻止冒泡，不触发折叠） */}
+                <div
+                  className="flex items-center border rounded-md overflow-hidden"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    className={`px-3 py-1 text-xs font-medium transition-colors ${
+                      prettyView
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background text-muted-foreground hover:bg-muted/50"
+                    }`}
+                    onClick={() => setPrettyView(true)}
+                  >
+                    Pretty
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-medium transition-colors border-l ${
+                      !prettyView
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background text-muted-foreground hover:bg-muted/50"
+                    }`}
+                    onClick={() => setPrettyView(false)}
+                  >
+                    JSON
+                  </button>
+                </div>
+              </div>
+
+              {!reqRespCollapsed && (
+                <div className="border-t p-3 space-y-2">
+                  {/* Input 子面板 */}
+                  <div className="rounded-md border overflow-hidden">
+                    <SubPanelHeader
+                      icon={<MessageSquare className="h-3.5 w-3.5" />}
+                      label="Input"
+                      tokens={log.prompt_tokens}
+                      cost={
+                        log.total_tokens > 0
+                          ? calcTokenCost(log.spend, log.prompt_tokens ?? 0, log.total_tokens)
+                          : 0
+                      }
+                      isCollapsed={inputCollapsed}
+                      onToggle={() => setInputCollapsed((v) => !v)}
+                      onCopy={handleCopyInput}
+                      copied={copiedInput}
+                    />
+                    {!inputCollapsed && (
+                      <div className="p-3 max-h-[480px] overflow-auto">
+                        {!prettyView && proxyReqHasContent ? (
+                          <JsonViewer data={parsedProxyReq} initialExpanded={false} />
+                        ) : messages !== null ? (
+                          <ChatMessages
+                            messages={
+                              messages as Array<{
+                                role: string;
+                                content: unknown;
+                                tool_calls?: unknown[];
+                              }>
+                            }
+                          />
+                        ) : proxyReqHasContent ? (
+                          <JsonViewer data={parsedProxyReq} initialExpanded={false} />
+                        ) : (
+                          <div className="flex items-start gap-2 text-muted-foreground text-sm bg-muted/40 rounded-md p-3">
+                            <MessageSquare className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                            <span>
+                              请求消息未存储。请在 LiteLLM 配置中启用{" "}
+                              {storePromptsHint}。
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
+
+                  {/* Output 子面板 */}
+                  <div className="rounded-md border overflow-hidden">
+                    <SubPanelHeader
+                      icon={<Bot className="h-3.5 w-3.5" />}
+                      label="Output"
+                      tokens={log.completion_tokens}
+                      cost={
+                        log.total_tokens > 0
+                          ? calcTokenCost(log.spend, log.completion_tokens ?? 0, log.total_tokens)
+                          : 0
+                      }
+                      isCollapsed={outputCollapsed}
+                      onToggle={() => setOutputCollapsed((v) => !v)}
+                      onCopy={handleCopyOutput}
+                      copied={copiedOutput}
+                    />
+                    {!outputCollapsed && (
+                      <div className="p-3 max-h-[480px] overflow-auto">
+                        {responseHasContent ? (
+                          !prettyView || !hasPrettyOutput ? (
+                            <JsonViewer data={parsedResponse} initialExpanded={true} />
+                          ) : (
+                            <>
+                              {assistantOutput?.content !== null &&
+                                assistantOutput?.content !== undefined && (
+                                  <ChatMessages
+                                    messages={[
+                                      { role: "assistant", content: assistantOutput.content },
+                                    ]}
+                                  />
+                                )}
+                              {assistantOutput?.toolCalls &&
+                                assistantOutput.toolCalls.length > 0 && (
+                                  <div className="mt-3 space-y-2">
+                                    {assistantOutput.toolCalls.map((tc, i) => (
+                                      <div
+                                        key={tc.id || i}
+                                        className="rounded-md border border-purple-200 bg-purple-50 dark:bg-purple-950/30 dark:border-purple-800 overflow-hidden"
+                                      >
+                                        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-purple-200 dark:border-purple-800">
+                                          <span className="text-xs font-semibold px-1.5 py-0.5 rounded-sm uppercase tracking-wide text-purple-700 bg-purple-100 dark:text-purple-300 dark:bg-purple-900/50">
+                                            tool_call
+                                          </span>
+                                          <span className="font-mono text-xs font-medium">
+                                            {tc.name}
+                                          </span>
+                                          {tc.id && (
+                                            <span className="font-mono text-xs text-muted-foreground ml-auto truncate max-w-[120px]">
+                                              {tc.id}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="p-2">
+                                          <JsonViewer data={tc.arguments} initialExpanded={true} />
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                            </>
+                          )
+                        ) : (
+                          <div className="flex items-start gap-2 text-muted-foreground text-sm bg-muted/40 rounded-md p-3">
+                            <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                            <span>
+                              响应未存储。请在 LiteLLM 配置中启用{" "}
+                              {storePromptsHint}。
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Metadata（独立可折叠区域） */}
+            {log.metadata && Object.keys(log.metadata).length > 0 && (
+              <div className="rounded-lg border overflow-hidden">
+                <SectionHeader
+                  isCollapsed={metaCollapsed}
+                  onToggle={() => setMetaCollapsed((v) => !v)}
+                >
+                  <span className="font-semibold text-sm">Metadata</span>
+                </SectionHeader>
+                {!metaCollapsed && (
+                  <div className="px-4 py-3 border-t">
+                    <JsonViewer data={log.metadata} initialExpanded={true} />
+                  </div>
                 )}
               </div>
-            ) : null}
+            )}
           </CardContent>
         </>
       )}

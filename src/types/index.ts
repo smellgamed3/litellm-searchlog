@@ -75,6 +75,8 @@ export interface SpendLog {
   status?: string;
   /** 请求耗时（毫秒） */
   request_duration_ms?: number;
+  /** LiteLLM 框架自身的处理耗时（毫秒） */
+  litellm_overhead_time_ms?: number;
 }
 
 /** 日志查询参数 */
