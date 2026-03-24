@@ -4,9 +4,9 @@ import type { LiteLLMInstancePublic } from "@/types";
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params;
+  const { id } = await params;
   const body = await req.json();
   const { name, baseUrl, adminKey } = body as {
     name?: string;
@@ -39,9 +39,9 @@ export async function PUT(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params;
+  const { id } = await params;
   const deleted = deleteInstance(id);
   if (!deleted) {
     return NextResponse.json({ error: "Instance not found" }, { status: 404 });
@@ -51,9 +51,9 @@ export async function DELETE(
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params;
+  const { id } = await params;
   const instance = getInstanceById(id);
   if (!instance) {
     return NextResponse.json({ error: "Instance not found" }, { status: 404 });
