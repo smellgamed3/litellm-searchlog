@@ -3,9 +3,22 @@
 import { cn } from "@/lib/utils";
 import { JsonViewer } from "@/components/JsonViewer";
 
+interface ToolCall {
+  id?: string;
+  function?: {
+    name?: string;
+    arguments?: string | Record<string, unknown>;
+  };
+  [key: string]: unknown;
+}
+
 interface ChatMessage {
   role: string;
   content: unknown;
+  /** assistant 消息中的函数调用列表 */
+  tool_calls?: ToolCall[] | unknown;
+  /** tool 角色消息对应的函数调用 ID */
+  tool_call_id?: string;
 }
 
 interface ChatMessagesProps {
@@ -84,6 +97,49 @@ function renderContent(content: unknown): React.ReactNode {
   return <JsonViewer data={content} initialExpanded={false} />;
 }
 
+/** 渲染单个 tool_call 块 */
+function renderToolCalls(toolCalls: ToolCall[]): React.ReactNode {
+  return (
+    <div className="mt-2 space-y-2">
+      {toolCalls.map((tc, i) => {
+        const fnName = tc.function?.name ?? "(未命名函数)";
+        let args: Record<string, unknown> = {};
+        const rawArgs = tc.function?.arguments;
+        if (typeof rawArgs === "string") {
+          try {
+            args = JSON.parse(rawArgs) as Record<string, unknown>;
+          } catch {
+            args = { raw: rawArgs };
+          }
+        } else if (typeof rawArgs === "object" && rawArgs !== null) {
+          args = rawArgs as Record<string, unknown>;
+        }
+        return (
+          <div
+            key={tc.id ?? i}
+            className="rounded-md border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-800 overflow-hidden"
+          >
+            <div className="flex items-center gap-2 px-2.5 py-1 border-b border-purple-200 dark:border-purple-800">
+              <span className="text-xs font-semibold px-1.5 py-0.5 rounded-sm uppercase tracking-wide text-purple-700 bg-purple-100 dark:text-purple-300 dark:bg-purple-900/50">
+                fn
+              </span>
+              <span className="font-mono text-xs font-medium">{fnName}</span>
+              {tc.id && (
+                <span className="font-mono text-xs text-muted-foreground ml-auto truncate max-w-[120px]">
+                  {tc.id}
+                </span>
+              )}
+            </div>
+            <div className="p-2">
+              <JsonViewer data={args} initialExpanded={true} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** 对话消息列表组件：以对话气泡风格展示 messages 数组 */
 export function ChatMessages({ messages }: ChatMessagesProps) {
   if (messages.length === 0) {
@@ -102,6 +158,16 @@ export function ChatMessages({ messages }: ChatMessagesProps) {
         };
         const badge = ROLE_BADGE[role] ?? "text-muted-foreground bg-muted";
 
+        // 处理 tool_calls（assistant 消息中的函数调用）
+        const toolCallsRaw = msg.tool_calls;
+        const toolCalls: ToolCall[] | null =
+          Array.isArray(toolCallsRaw) && toolCallsRaw.length > 0
+            ? (toolCallsRaw as ToolCall[])
+            : null;
+
+        // tool 角色时附加 tool_call_id 标识
+        const toolCallId = role === "tool" ? msg.tool_call_id : undefined;
+
         return (
           <div
             key={idx}
@@ -116,8 +182,14 @@ export function ChatMessages({ messages }: ChatMessagesProps) {
               >
                 {config.label}
               </span>
+              {toolCallId && (
+                <span className="font-mono text-xs text-muted-foreground truncate max-w-[200px]">
+                  {toolCallId}
+                </span>
+              )}
             </div>
             {renderContent(msg.content)}
+            {toolCalls && renderToolCalls(toolCalls)}
           </div>
         );
       })}
