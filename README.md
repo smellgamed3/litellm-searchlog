@@ -12,12 +12,47 @@
 
 ## 快速开始
 
-### 前置条件
+### 方式一：Docker Compose（推荐）
 
-- Node.js 18+
-- 已运行的 [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) 实例，并具备管理员 API 密钥
+> **前置条件**：已安装 [Docker](https://docs.docker.com/get-docker/) 与 [Docker Compose](https://docs.docker.com/compose/install/)（v2.x+）。
 
-### 安装
+```bash
+# 1. 克隆仓库
+git clone https://github.com/smellgamed3/litellm-searchlog.git
+cd litellm-searchlog
+
+# 2. （可选）创建并自定义 .env 文件
+cp .env.sample .env
+# 按需编辑 .env，例如修改对外暴露的端口号
+
+# 3. 启动服务（后台运行）
+docker compose up -d
+```
+
+服务启动后在浏览器中打开 [http://localhost:3000](http://localhost:3000)。
+
+**常用命令**
+
+```bash
+# 查看实时日志
+docker compose logs -f
+
+# 停止服务（保留数据）
+docker compose down
+
+# 更新到最新版本
+docker compose pull && docker compose up -d
+```
+
+**数据持久化**
+
+实例配置（含 adminKey）保存在宿主机的 `./data/instances.json`，容器重启后不会丢失。如需备份，直接复制该文件即可。
+
+---
+
+### 方式二：本地开发
+
+**前置条件**：Node.js 18+，已运行的 [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) 实例
 
 ```bash
 # 安装依赖
@@ -29,11 +64,39 @@ npm run dev
 
 在浏览器中打开 [http://localhost:3000](http://localhost:3000)。
 
-### 配置
+---
 
-1. 前往 **Instances** → **Add Instance**
-2. 填写名称、LiteLLM Proxy 的 Base URL 以及管理员 API 密钥
-3. 实例配置会保存在服务端的 `instances.json` 文件中（已加入 .gitignore）
+### 方式三：生产环境直接运行
+
+```bash
+npm run build
+npm start
+```
+
+---
+
+## 使用指引
+
+### 添加 LiteLLM 实例
+
+1. 打开应用后，前往 **Instances** → **Add Instance**
+2. 填写：
+   - **Name**：实例的显示名称（便于区分多个代理）
+   - **Base URL**：LiteLLM Proxy 的访问地址（如 `http://your-proxy:4000`）
+   - **Admin Key**：LiteLLM 管理员 API 密钥（`sk-...`）
+3. 点击 **Save**，实例配置将安全地保存在服务端
+
+> 实例配置存储在服务端的 `instances.json`（已加入 .gitignore），管理员密钥不会暴露给浏览器。
+
+### 搜索日志
+
+1. 在首页 **Search** 页面选择要查询的实例
+2. 可按以下条件过滤：
+   - **Conversation ID** — 按对话 ID 精确检索
+   - **Time Range** — 按时间范围筛选
+   - **User ID** — 按用户 ID 过滤
+   - **Request ID** — 按请求 ID 精确检索
+3. 点击日志条目可展开查看请求消息、响应内容及费用明细
 
 ### 在 LiteLLM 中启用提示词/响应存储
 
@@ -70,17 +133,17 @@ general_settings:
   └── /api/logs        — 代理至 LiteLLM /spend/logs（隐藏管理员密钥）
 ```
 
-- **框架**：Next.js 14（App Router）
+- **框架**：Next.js（App Router，[standalone 模式](https://nextjs.org/docs/pages/api-reference/next-config-js/output#automatically-copying-traced-files) — 适合容器化部署的精简输出）
 - **UI**：Tailwind CSS + 自定义 shadcn/ui 风格组件
-- **存储**：`instances.json` 文件（服务端，已加入 .gitignore）
+- **存储**：`instances.json` 文件（服务端，路径由 `DATA_DIR` 环境变量控制）
 
-## 生产部署
+## 环境变量
 
-```bash
-npm run build
-npm start
-```
-
-也可部署至 Vercel 或 Docker。`instances.json` 文件会在添加第一个实例时自动创建。
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `PORT` | `3000` | 应用监听端口 |
+| `HOSTNAME` | `0.0.0.0` | 应用监听地址 |
+| `NODE_ENV` | `production` | Node.js 运行环境 |
+| `DATA_DIR` | 项目根目录 | 实例配置文件存储目录（Docker 部署时自动设为 `/app/data`） |
 
 > ⚠️ 在生产环境中，建议使用数据库或加密的密钥管理器来存储实例配置，而非明文 JSON 文件。

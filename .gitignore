@@ -18,6 +18,7 @@ build/
 
 # Instance data (contains admin keys — keep server-side only)
 instances.json
+data/
 
 # Misc
 .DS_Store
