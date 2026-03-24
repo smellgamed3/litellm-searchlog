@@ -1,0 +1,87 @@
+name: 发布 Docker 镜像到 GHCR
+
+on:
+  push:
+    # 仅在推送大版本 tag（如 v1.0.0、v2.0.0）时触发
+    tags:
+      - "v[0-9]+.0.0"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: 构建并发布镜像
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 提取镜像元数据（标签、标注）
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: 构建镜像（仅本地，用于测试）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test
+          cache-from: type=gha,scope=docker-build
+          cache-to: type=gha,scope=docker-build,mode=max
+
+      - name: 测试镜像能否正常启动
+        run: |
+          docker run -d --name test-container \
+            -p 3000:3000 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test
+          # 使用重试轮询替代固定等待，最长等待 30 秒
+          for i in $(seq 1 15); do
+            if curl --silent --fail http://localhost:3000/ > /dev/null 2>&1; then
+              echo "容器已就绪"
+              break
+            fi
+            if [ "$i" -eq 15 ]; then
+              echo "容器启动超时，输出日志："
+              docker logs test-container
+              exit 1
+            fi
+            sleep 2
+          done
+          # 检查容器是否仍在运行（未崩溃退出）
+          docker inspect test-container --format='{{.State.Status}}' | grep -q running
+          docker stop test-container
+          docker rm test-container
+
+      - name: 构建并推送镜像到 GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=docker-build
+          cache-to: type=gha,scope=docker-build,mode=max
+          platforms: linux/amd64,linux/arm64
