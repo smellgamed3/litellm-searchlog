@@ -3,14 +3,22 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { Search, Settings, Database } from "lucide-react";
+import { Search, Settings, Database, ExternalLink } from "lucide-react";
 
 const navItems = [
   { href: "/search", label: "Log Search", icon: Search },
   { href: "/instances", label: "Instances", icon: Settings },
 ];
 
-export function NavBar() {
+interface NavBarProps {
+  /** 应用的公开访问 URL（由 APP_URL 环境变量配置），可选。
+   *  格式示例：https://example.com/logs
+   *  配置后将在导航栏右侧显示为可点击链接。
+   */
+  appUrl?: string;
+}
+
+export function NavBar({ appUrl }: NavBarProps) {
   const pathname = usePathname();
 
   return (
@@ -38,6 +46,19 @@ export function NavBar() {
               </Link>
             ))}
           </div>
+          {appUrl && (
+            <div className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+              <ExternalLink className="h-3.5 w-3.5" />
+              <a
+                href={appUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-foreground transition-colors"
+              >
+                {appUrl}
+              </a>
+            </div>
+          )}
         </div>
       </div>
     </nav>

@@ -1,8 +1,11 @@
 services:
   litellm-searchlog:
-    # 从 GitHub Container Registry 拉取最新镜像
-    # 如需本地构建，可将下方 image 行注释并取消 build 注释：
-    #   build: .
+    # 从 GitHub Container Registry 拉取最新镜像（默认部署在根路径 /）
+    # 如需部署在子路径下（如 /logs），请注释 image 行，取消 build 注释并设置 BASE_PATH：
+    #   build:
+    #     context: .
+    #     args:
+    #       BASE_PATH: /logs
     image: ghcr.io/smellgamed3/litellm-searchlog:latest
     container_name: litellm-searchlog
     restart: unless-stopped
@@ -17,11 +20,17 @@ services:
       HOSTNAME: "0.0.0.0"
       # 实例配置（含 adminKey）的持久化目录，映射至下方 volumes
       DATA_DIR: /app/data
+      # 应用部署的子路径，需与构建时的 BASE_PATH 保持一致（供健康检查使用）
+      # 示例：BASE_PATH=/logs（使用本地构建时）
+      BASE_PATH: "${BASE_PATH:-}"
+      # 应用的公开访问 URL（可选），用于显示和元数据配置
+      # 示例：APP_URL=https://example.com/logs
+      APP_URL: "${APP_URL:-}"
     volumes:
       # 持久化实例配置，防止容器重启后数据丢失
       - ./data:/app/data
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000${BASE_PATH:-}/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

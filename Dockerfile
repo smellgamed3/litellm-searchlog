@@ -9,6 +9,11 @@ RUN npm ci
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# BASE_PATH：应用部署的子路径（如 /logs），留空则部署在根路径
+# 示例：docker build --build-arg BASE_PATH=/logs .
+ARG BASE_PATH=""
+ENV BASE_PATH=${BASE_PATH}
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
@@ -19,6 +24,11 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+
+# 将构建时的 BASE_PATH 保留为运行时环境变量，供健康检查脚本使用
+# 注意：运行时修改此变量不会改变已编译的路由配置
+ARG BASE_PATH=""
+ENV BASE_PATH=${BASE_PATH}
 
 # 创建非 root 用户
 RUN addgroup --system --gid 1001 nodejs && \
