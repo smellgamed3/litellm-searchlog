@@ -123,6 +123,13 @@ server {
 
     # SSL 证书配置（略）
 
+    # 访问子路径时若不带尾斜杠（如 /logs），自动 301 跳转补全（如 /logs/）。
+    # 若缺少此规则，访问 /logs 时不匹配 location /logs/ 块，Nginx 将返回 404，
+    # 浏览器随后尝试加载的 JS 文件也会收到 404 HTML，出现 "Unexpected identifier" 错误。
+    location = /logs {
+        return 301 /logs/;
+    }
+
     location /logs/ {
         proxy_pass         http://127.0.0.1:3000/logs/;
         proxy_http_version 1.1;
@@ -137,7 +144,9 @@ server {
 }
 ```
 
-> ⚠️ **注意**：`proxy_pass` 目标地址中的路径（`/logs/`）必须与 `BASE_PATH` 保持一致，**不能**省略路径前缀。
+> ⚠️ **注意**：
+> - `proxy_pass` 目标地址中的路径（`/logs/`）必须与 `BASE_PATH` 保持一致，**不能**省略路径前缀。
+> - 必须添加 `location = /logs { return 301 /logs/; }` 精确重定向规则。若省略此规则，用户访问无尾斜杠的 URL（如 `/logs`）时，请求不会匹配 `location /logs/` 块，Nginx 将返回 404。浏览器随后尝试加载的 JS 文件也会收到 404 HTML 内容，并因将其当作脚本解析而抛出 `Uncaught SyntaxError: Unexpected identifier` 错误。
 
 ### 原理说明
 
