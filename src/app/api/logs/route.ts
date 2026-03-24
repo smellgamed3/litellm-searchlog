@@ -28,7 +28,8 @@ export async function GET(req: NextRequest) {
   }
 
   // 构建请求 LiteLLM /spend/logs 所需的查询参数
-  const litellmParams = new URLSearchParams();
+  // summarize=false：确保返回单条日志详情，而非按日期聚合的汇总数据（默认行为会导致 messages/response 字段缺失）
+  const litellmParams = new URLSearchParams({ summarize: "false" });
   if (requestId) litellmParams.set("request_id", requestId);
   if (startDate) litellmParams.set("start_date", startDate);
   if (endDate) litellmParams.set("end_date", endDate);

@@ -34,10 +34,21 @@ export interface SpendLog {
   call_type: string;
   /** 使用的模型名称 */
   model: string;
-  /** 请求消息内容（需在 LiteLLM 中启用存储） */
+  /**
+   * 请求消息内容。
+   * 注意：LiteLLM 的普通 completion 调用中此字段通常为空对象 {}，
+   * 实际请求消息存储在 proxy_server_request.messages 中。
+   * 需在 LiteLLM 中启用 store_prompts_in_spend_logs: true。
+   */
   messages?: unknown;
   /** 模型响应内容（需在 LiteLLM 中启用存储） */
   response?: unknown;
+  /**
+   * 完整的代理服务器请求体（含 messages、model、temperature 等）。
+   * 当 messages 字段为空时，可从此字段的 messages 属性提取请求消息。
+   * 需在 LiteLLM 中启用 store_prompts_in_spend_logs: true。
+   */
+  proxy_server_request?: unknown;
   /** 请求开始时间 */
   startTime: string;
   /** 请求结束时间 */
@@ -60,6 +71,10 @@ export interface SpendLog {
   cache_hit?: string;
   /** 缓存键 */
   cache_key?: string;
+  /** 请求状态（success / failure） */
+  status?: string;
+  /** 请求耗时（毫秒） */
+  request_duration_ms?: number;
 }
 
 /** 日志查询参数 */
