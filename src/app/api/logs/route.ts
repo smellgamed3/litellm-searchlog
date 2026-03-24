@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Build query parameters for LiteLLM /spend/logs
+  // 构建请求 LiteLLM /spend/logs 所需的查询参数
   const litellmParams = new URLSearchParams();
   if (requestId) litellmParams.set("request_id", requestId);
   if (startDate) litellmParams.set("start_date", startDate);
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
 
     const logs: SpendLog[] = await response.json();
 
-    // Client-side filter by conversation_id from metadata
+    // 在客户端按 metadata.conversation_id 进行二次过滤
     if (conversationId && conversationId.trim()) {
       const filtered = logs.filter((log) => {
         const meta = log.metadata;
