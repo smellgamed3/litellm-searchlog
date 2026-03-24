@@ -5,6 +5,12 @@ on:
     # 仅在推送大版本 tag（如 v1.0.0、v2.0.0）时触发
     tags:
       - "v[0-9]+.0.0"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要构建并推送的镜像标签，例如 'latest' 或 'v1.0.0'"
+        required: false
+        default: "latest"
 
 env:
   REGISTRY: ghcr.io
@@ -41,6 +47,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: 构建镜像（仅本地，用于测试）
         uses: docker/build-push-action@v6
