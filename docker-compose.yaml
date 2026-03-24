@@ -1,0 +1,28 @@
+services:
+  litellm-searchlog:
+    # 从 GitHub Container Registry 拉取最新镜像
+    # 如需本地构建，可将下方 image 行注释并取消 build 注释：
+    #   build: .
+    image: ghcr.io/smellgamed3/litellm-searchlog:latest
+    container_name: litellm-searchlog
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      # 实例配置（含 adminKey）的持久化目录，映射至下方 volumes
+      DATA_DIR: /app/data
+    volumes:
+      # 持久化实例配置，防止容器重启后数据丢失
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

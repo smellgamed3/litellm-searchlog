@@ -3,8 +3,11 @@ import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import type { LiteLLMInstance } from "@/types";
 
-// 实例配置持久化文件路径（存储在项目根目录，已加入 .gitignore）
-const DATA_FILE = path.join(process.cwd(), "instances.json");
+// 实例配置持久化文件路径
+// 优先使用环境变量 DATA_DIR（Docker 部署时推荐设为 /app/data），
+// 未设置时回退至项目根目录（本地开发场景保持兼容）
+const DATA_DIR = process.env.DATA_DIR ?? process.cwd();
+const DATA_FILE = path.join(DATA_DIR, "instances.json");
 
 /** 从文件中读取所有实例配置，读取失败时返回空数组 */
 function readInstances(): LiteLLMInstance[] {
@@ -21,6 +24,7 @@ function readInstances(): LiteLLMInstance[] {
 
 /** 将实例配置列表序列化并写入文件 */
 function writeInstances(instances: LiteLLMInstance[]): void {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(DATA_FILE, JSON.stringify(instances, null, 2), "utf-8");
 }
 
