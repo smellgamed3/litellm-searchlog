@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { JsonViewer } from "@/components/JsonViewer";
+import { ChatMessages } from "@/components/ChatMessages";
 import {
   ChevronDown,
   ChevronUp,
@@ -15,6 +16,7 @@ import {
   Hash,
   MessageSquare,
   Bot,
+  FileJson,
 } from "lucide-react";
 import type { SpendLog } from "@/types";
 
@@ -31,7 +33,7 @@ function formatDuration(start: string, end: string): string {
 
 function formatTime(isoString: string): string {
   const d = new Date(isoString);
-  return d.toLocaleTimeString("en-US", {
+  return d.toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -41,32 +43,118 @@ function formatTime(isoString: string): string {
 
 function formatDate(isoString: string): string {
   const d = new Date(isoString);
-  return d.toLocaleDateString("en-US", {
+  return d.toLocaleDateString("zh-CN", {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
 }
 
+/**
+ * 将未知字段解析为 JavaScript 对象。
+ * 如果字段是 JSON 字符串，则解析为对象；否则直接返回。
+ */
+function parseField(raw: unknown): unknown {
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+/**
+ * 判断一个值是否"有实际内容"：
+ * - null / undefined → 无内容
+ * - 空字符串 / 空对象 {} / 空数组 [] → 无内容
+ */
+function hasContent(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value as object).length > 0;
+  return true;
+}
+
+/**
+ * 尝试从 messages 字段或 proxy_server_request.messages 中提取请求消息数组。
+ *
+ * LiteLLM 已知问题：普通 completion 调用的 messages 字段在数据库中始终为空 {}，
+ * 实际消息存储在 proxy_server_request（原始请求体）里。
+ * 参见：https://github.com/BerriAI/litellm/blob/main/litellm/proxy/spend_tracking/spend_tracking_utils.py
+ */
+function extractMessages(log: SpendLog): unknown[] | null {
+  // 首先尝试 messages 字段
+  const parsedMessages = parseField(log.messages);
+  if (Array.isArray(parsedMessages) && parsedMessages.length > 0) {
+    return parsedMessages;
+  }
+
+  // 回退：从 proxy_server_request 中提取
+  const parsedProxyReq = parseField(log.proxy_server_request);
+  if (parsedProxyReq && typeof parsedProxyReq === "object" && !Array.isArray(parsedProxyReq)) {
+    const proxyMessages = (parsedProxyReq as Record<string, unknown>).messages;
+    if (Array.isArray(proxyMessages) && proxyMessages.length > 0) {
+      return proxyMessages;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 从 response 字段中提取助手回复文本（choices[0].message.content）。
+ * 如果无法提取，返回 null，上层将展示完整 JSON。
+ */
+function extractAssistantContent(response: unknown): string | null {
+  if (!response || typeof response !== "object" || Array.isArray(response)) return null;
+  const resp = response as Record<string, unknown>;
+  const choices = resp.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return null;
+  const firstChoice = choices[0];
+  if (!firstChoice || typeof firstChoice !== "object") return null;
+  const message = (firstChoice as Record<string, unknown>).message;
+  if (!message || typeof message !== "object") return null;
+  const content = (message as Record<string, unknown>).content;
+  if (typeof content === "string") return content;
+  return null;
+}
+
 export function LogDetail({ log, index }: LogDetailProps) {
   const [expanded, setExpanded] = useState(false);
+  // rawView：切换响应显示为原始 JSON（默认为对话视图）
+  const [rawView, setRawView] = useState(false);
 
-  const parseContent = (raw: unknown): unknown => {
-    if (typeof raw === "string") {
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return raw;
-      }
-    }
-    return raw;
+  const handleToggleRawView = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRawView((v) => !v);
   };
 
-  const messages = parseContent(log.messages);
-  const response = parseContent(log.response);
+  // 提取请求消息（优先 messages 字段，回退 proxy_server_request.messages）
+  const messages = extractMessages(log);
+
+  // 解析响应
+  const parsedResponse = parseField(log.response);
+  const responseHasContent = hasContent(parsedResponse);
+
+  // 从响应中提取助手回复内容（用于友好展示）
+  const assistantText = responseHasContent ? extractAssistantContent(parsedResponse) : null;
+
+  // 解析 proxy_server_request（用于原始请求体展示）
+  const parsedProxyReq = parseField(log.proxy_server_request);
+  const proxyReqHasContent = hasContent(parsedProxyReq);
+
+  const storePromptsHint = (
+    <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
+      store_prompts_in_spend_logs: true
+    </code>
+  );
 
   return (
     <Card className="overflow-hidden">
+      {/* 折叠头：点击展开/收起 */}
       <div
         className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors"
         onClick={() => setExpanded(!expanded)}
@@ -115,7 +203,7 @@ export function LogDetail({ log, index }: LogDetailProps) {
       {expanded && (
         <>
           <Separator />
-          <CardContent className="pt-4 space-y-4">
+          <CardContent className="pt-4 space-y-5">
             {/* 基本元数据：调用类型、Token 用量、用户 */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-md border p-3">
@@ -148,47 +236,75 @@ export function LogDetail({ log, index }: LogDetailProps) {
               </div>
             </div>
 
-            {/* 请求消息内容 */}
-            {messages !== undefined && messages !== null ? (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
+            {/* 请求消息 */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
                   <MessageSquare className="h-4 w-4 text-primary" />
-                  <h4 className="font-semibold text-sm">Request Messages</h4>
+                  <h4 className="font-semibold text-sm">请求消息（Request Messages）</h4>
                 </div>
-                <JsonViewer data={messages} initialExpanded={true} />
               </div>
-            ) : (
-              <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                <MessageSquare className="h-4 w-4" />
-                <span>
-                  Messages not stored. Enable{" "}
-                  <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
-                    store_prompts_in_spend_logs: true
-                  </code>{" "}
-                  in your LiteLLM config.
-                </span>
-              </div>
-            )}
+              {messages !== null ? (
+                <ChatMessages messages={messages as { role: string; content: unknown }[]} />
+              ) : (
+                <div className="flex items-start gap-2 text-muted-foreground text-sm bg-muted/40 rounded-md p-3">
+                  <MessageSquare className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <span>
+                    请求消息未存储。请在 LiteLLM 配置中启用{" "}
+                    {storePromptsHint}。
+                  </span>
+                </div>
+              )}
+            </div>
 
             {/* 响应内容 */}
-            {response !== undefined && response !== null ? (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Bot className="h-4 w-4 text-primary" />
+                  <h4 className="font-semibold text-sm">模型响应（Response）</h4>
+                </div>
+                {/* 当有结构化响应时，提供"对话视图 / 原始 JSON"切换 */}
+                {responseHasContent && assistantText !== null && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs gap-1"
+                    onClick={handleToggleRawView}
+                  >
+                    <FileJson className="h-3 w-3" />
+                    {rawView ? "对话视图" : "原始 JSON"}
+                  </Button>
+                )}
+              </div>
+              {responseHasContent ? (
+                rawView || assistantText === null ? (
+                  <JsonViewer data={parsedResponse} initialExpanded={true} />
+                ) : (
+                  /* 对话视图：以 assistant 气泡展示回复内容 */
+                  <ChatMessages
+                    messages={[{ role: "assistant", content: assistantText }]}
+                  />
+                )
+              ) : (
+                <div className="flex items-start gap-2 text-muted-foreground text-sm bg-muted/40 rounded-md p-3">
+                  <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <span>
+                    响应未存储。请在 LiteLLM 配置中启用{" "}
+                    {storePromptsHint}。
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* 原始请求体（proxy_server_request）：包含完整的模型参数等 */}
+            {proxyReqHasContent && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
-                  <Bot className="h-4 w-4 text-primary" />
-                  <h4 className="font-semibold text-sm">Response</h4>
+                  <FileJson className="h-4 w-4 text-primary" />
+                  <h4 className="font-semibold text-sm">原始请求体（Request Body）</h4>
                 </div>
-                <JsonViewer data={response} initialExpanded={true} />
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                <Bot className="h-4 w-4" />
-                <span>
-                  Response not stored. Enable{" "}
-                  <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
-                    store_prompts_in_spend_logs: true
-                  </code>{" "}
-                  in your LiteLLM config.
-                </span>
+                <JsonViewer data={parsedProxyReq} initialExpanded={false} />
               </div>
             )}
 
@@ -197,7 +313,7 @@ export function LogDetail({ log, index }: LogDetailProps) {
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <Hash className="h-4 w-4 text-primary" />
-                  <h4 className="font-semibold text-sm">Metadata</h4>
+                  <h4 className="font-semibold text-sm">元数据（Metadata）</h4>
                 </div>
                 <JsonViewer data={log.metadata} initialExpanded={true} />
               </div>
