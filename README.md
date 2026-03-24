@@ -76,6 +76,58 @@ npm start
 
 ---
 
+## HTTPS 反向代理（根路径部署）
+
+若需通过 HTTPS 访问本应用（如 `https://example.com`），可使用 Nginx 或 Caddy 作为反向代理，无需修改镜像或重新构建。
+
+### Nginx 配置
+
+```nginx
+# HTTP → HTTPS 重定向
+server {
+    listen 80;
+    server_name example.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name example.com;
+
+    ssl_certificate     /etc/ssl/certs/example.com/fullchain.pem;
+    ssl_certificate_key /etc/ssl/certs/example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass         http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade $http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+### Caddy 配置
+
+Caddy 支持自动申请与续期 Let's Encrypt 证书，配置极为简洁：
+
+```caddy
+example.com {
+    reverse_proxy localhost:3000
+}
+```
+
+> 将 `example.com` 替换为你的实际域名，`localhost:3000` 替换为应用的实际监听地址。  
+> Caddy 会自动处理 HTTP → HTTPS 重定向、证书申请和证书续期，无需额外配置。
+
+---
+
 ## 子路径部署（反向代理 HTTPS）
 
 若需将本应用挂载到 HTTPS 服务器的指定子路径（如 `https://example.com/logs`），需要：
@@ -114,14 +166,26 @@ services:
       - ./data:/app/data
 ```
 
-### 步骤三：配置 Nginx 反向代理
+### 步骤三：配置反向代理
+
+#### Nginx
 
 ```nginx
+# HTTP → HTTPS 重定向
+server {
+    listen 80;
+    server_name example.com;
+    return 301 https://$server_name$request_uri;
+}
+
 server {
     listen 443 ssl;
     server_name example.com;
 
-    # SSL 证书配置（略）
+    ssl_certificate     /etc/ssl/certs/example.com/fullchain.pem;
+    ssl_certificate_key /etc/ssl/certs/example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
 
     # 访问子路径时若不带尾斜杠（如 /logs），自动 301 跳转补全（如 /logs/）。
     # 若缺少此规则，访问 /logs 时不匹配 location /logs/ 块，Nginx 将返回 404，
@@ -147,6 +211,23 @@ server {
 > ⚠️ **注意**：
 > - `proxy_pass` 目标地址中的路径（`/logs/`）必须与 `BASE_PATH` 保持一致，**不能**省略路径前缀。
 > - 必须添加 `location = /logs { return 301 /logs/; }` 精确重定向规则。若省略此规则，用户访问无尾斜杠的 URL（如 `/logs`）时，请求不会匹配 `location /logs/` 块，Nginx 将返回 404。浏览器随后尝试加载的 JS 文件也会收到 404 HTML 内容，并因将其当作脚本解析而抛出 `Uncaught SyntaxError: Unexpected identifier` 错误。
+
+#### Caddy
+
+```caddy
+example.com {
+    # /logs（无尾斜杠）永久重定向到 /logs/，与 Nginx 的精确重定向规则等效
+    redir /logs /logs/ permanent
+
+    # 将 /logs/* 请求代理到容器，保留完整路径前缀（与 BASE_PATH 保持一致）
+    handle /logs/* {
+        reverse_proxy localhost:3000
+    }
+}
+```
+
+> Caddy 会自动处理 HTTP → HTTPS 重定向和证书管理，无需额外配置。  
+> `handle /logs/*` 默认保留完整请求路径（不剥离 `/logs` 前缀），与应用的 `BASE_PATH=/logs` 匹配。
 
 ### 原理说明
 
