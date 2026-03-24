@@ -9,6 +9,7 @@
 - 🔐 **安全** — 管理员 API 密钥存储在服务端，不会暴露给浏览器
 - 📊 **详细视图** — 可展开的日志条目，含格式化的 JSON（消息、响应和元数据）
 - 💰 **消费追踪** — 查看每次请求及汇总的 Token 用量和费用
+- 🔗 **子路径部署** — 支持将服务映射至 HTTPS 服务器的指定子路径下
 
 ## 快速开始
 
@@ -72,6 +73,79 @@ npm run dev
 npm run build
 npm start
 ```
+
+---
+
+## 子路径部署（反向代理 HTTPS）
+
+若需将本应用挂载到 HTTPS 服务器的指定子路径（如 `https://example.com/logs`），需要：
+
+1. **重新构建镜像**，传入 `BASE_PATH` 构建参数
+2. **配置反向代理**（如 Nginx），将子路径流量转发到容器
+
+### 步骤一：本地构建带子路径的镜像
+
+```bash
+# 以 /logs 为子路径构建镜像
+docker build --build-arg BASE_PATH=/logs -t my-searchlog:latest .
+```
+
+### 步骤二：更新 docker-compose.yaml
+
+修改 `docker-compose.yaml`，使用本地构建并设置对应环境变量：
+
+```yaml
+services:
+  litellm-searchlog:
+    build:
+      context: .
+      args:
+        BASE_PATH: /logs          # 与构建参数保持一致
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      DATA_DIR: /app/data
+      BASE_PATH: /logs            # 供健康检查使用，需与构建参数一致
+      APP_URL: https://example.com/logs  # 可选：公开访问 URL，显示在导航栏
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+```
+
+### 步骤三：配置 Nginx 反向代理
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name example.com;
+
+    # SSL 证书配置（略）
+
+    location /logs/ {
+        proxy_pass         http://127.0.0.1:3000/logs/;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade $http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+> ⚠️ **注意**：`proxy_pass` 目标地址中的路径（`/logs/`）必须与 `BASE_PATH` 保持一致，**不能**省略路径前缀。
+
+### 原理说明
+
+| 配置项 | 作用 | 生效时机 |
+|--------|------|----------|
+| `BASE_PATH`（构建参数） | 将所有路由和静态资源前缀设为指定子路径 | **构建时**固化，运行时修改无效 |
+| `BASE_PATH`（运行时环境变量） | 供容器健康检查使用 | 运行时，不影响路由 |
+| `APP_URL`（运行时环境变量） | 在导航栏显示公开访问地址 | 运行时，可随时修改 |
 
 ---
 
@@ -139,11 +213,13 @@ general_settings:
 
 ## 环境变量
 
-| 变量名 | 默认值 | 说明 |
-|--------|--------|------|
-| `PORT` | `3000` | 应用监听端口 |
-| `HOSTNAME` | `0.0.0.0` | 应用监听地址 |
-| `NODE_ENV` | `production` | Node.js 运行环境 |
-| `DATA_DIR` | 项目根目录 | 实例配置文件存储目录（Docker 部署时自动设为 `/app/data`） |
+| 变量名 | 默认值 | 生效时机 | 说明 |
+|--------|--------|----------|------|
+| `PORT` | `3000` | 运行时 | 应用监听端口 |
+| `HOSTNAME` | `0.0.0.0` | 运行时 | 应用监听地址 |
+| `NODE_ENV` | `production` | 运行时 | Node.js 运行环境 |
+| `DATA_DIR` | 项目根目录 | 运行时 | 实例配置文件存储目录（Docker 部署时自动设为 `/app/data`） |
+| `BASE_PATH` | `（空）` | **构建时** | 应用子路径前缀，如 `/logs`；修改后需重新构建镜像 |
+| `APP_URL` | `（空）` | 运行时 | 应用公开访问 URL，如 `https://example.com/logs`；配置后显示在导航栏 |
 
 > ⚠️ 在生产环境中，建议使用数据库或加密的密钥管理器来存储实例配置，而非明文 JSON 文件。
