@@ -1,54 +1,54 @@
 # LiteLLM SearchLog
 
-A web management interface for searching and inspecting LiteLLM Proxy spend logs.
+用于搜索和查看 LiteLLM Proxy 消费日志的 Web 管理界面。
 
-## Features
+## 功能特性
 
-- 🔌 **Multi-instance support** — connect to multiple LiteLLM Proxy instances
-- 🔍 **Log search** — filter by conversation ID, date range, user ID, or request ID
-- 🔐 **Secure** — admin API keys are stored server-side and never exposed to the browser
-- 📊 **Detailed views** — expandable log entries with formatted JSON for messages, responses, and metadata
-- 💰 **Spend tracking** — view tokens used and cost per request and in aggregate
+- 🔌 **多实例支持** — 可同时连接多个 LiteLLM Proxy 实例
+- 🔍 **日志搜索** — 支持按对话 ID、时间范围、用户 ID 或请求 ID 过滤
+- 🔐 **安全** — 管理员 API 密钥存储在服务端，不会暴露给浏览器
+- 📊 **详细视图** — 可展开的日志条目，含格式化的 JSON（消息、响应和元数据）
+- 💰 **消费追踪** — 查看每次请求及汇总的 Token 用量和费用
 
-## Getting Started
+## 快速开始
 
-### Prerequisites
+### 前置条件
 
 - Node.js 18+
-- A running [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) instance with an admin API key
+- 已运行的 [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) 实例，并具备管理员 API 密钥
 
-### Setup
+### 安装
 
 ```bash
-# Install dependencies
+# 安装依赖
 npm install
 
-# Start the development server
+# 启动开发服务器
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+在浏览器中打开 [http://localhost:3000](http://localhost:3000)。
 
-### Configuration
+### 配置
 
-1. Navigate to **Instances** → **Add Instance**
-2. Enter a name, the base URL of your LiteLLM Proxy, and your admin API key
-3. Instance configurations are stored in `instances.json` on the server (excluded from git)
+1. 前往 **Instances** → **Add Instance**
+2. 填写名称、LiteLLM Proxy 的 Base URL 以及管理员 API 密钥
+3. 实例配置会保存在服务端的 `instances.json` 文件中（已加入 .gitignore）
 
-### Enabling Prompt/Response Storage in LiteLLM
+### 在 LiteLLM 中启用提示词/响应存储
 
-To see request messages and responses in the log detail view, enable storage in your LiteLLM `proxy_config.yaml`:
+若要在日志详情视图中查看请求消息和响应内容，需在 LiteLLM 的 `proxy_config.yaml` 中启用存储：
 
 ```yaml
 general_settings:
   store_prompts_in_spend_logs: true
 ```
 
-Or enable it in the Admin UI → Logs → Settings.
+或在管理界面 → Logs → Settings 中开启。
 
-### Passing `conversation_id`
+### 传递 `conversation_id`
 
-To group requests by conversation, include `conversation_id` in the `metadata` field of your LLM requests:
+若要按对话分组请求，可在 LLM 请求的 `metadata` 字段中包含 `conversation_id`：
 
 ```json
 {
@@ -60,27 +60,27 @@ To group requests by conversation, include `conversation_id` in the `metadata` f
 }
 ```
 
-## Architecture
+## 架构
 
 ```
-Browser (Next.js App Router)
-  └── /search          — Log search UI
-  └── /instances       — Instance management UI
-  └── /api/instances   — CRUD for LiteLLM instance configs (server-side)
-  └── /api/logs        — Proxy to LiteLLM /spend/logs (hides admin key)
+浏览器（Next.js App Router）
+  └── /search          — 日志搜索界面
+  └── /instances       — 实例管理界面
+  └── /api/instances   — LiteLLM 实例配置的 CRUD 接口（服务端）
+  └── /api/logs        — 代理至 LiteLLM /spend/logs（隐藏管理员密钥）
 ```
 
-- **Framework**: Next.js 14 (App Router)
-- **UI**: Tailwind CSS + custom shadcn/ui-style components
-- **Storage**: `instances.json` file (server-side, gitignored)
+- **框架**：Next.js 14（App Router）
+- **UI**：Tailwind CSS + 自定义 shadcn/ui 风格组件
+- **存储**：`instances.json` 文件（服务端，已加入 .gitignore）
 
-## Production Deployment
+## 生产部署
 
 ```bash
 npm run build
 npm start
 ```
 
-Or deploy to Vercel / Docker. The `instances.json` file is created automatically when you add your first instance.
+也可部署至 Vercel 或 Docker。`instances.json` 文件会在添加第一个实例时自动创建。
 
-> ⚠️ In production, consider using a database or encrypted secrets manager for storing instance configurations instead of a plain JSON file.
+> ⚠️ 在生产环境中，建议使用数据库或加密的密钥管理器来存储实例配置，而非明文 JSON 文件。

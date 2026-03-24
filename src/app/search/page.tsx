@@ -24,7 +24,7 @@ export default function SearchPage() {
   const [instances, setInstances] = useState<LiteLLMInstancePublic[]>([]);
   const [instancesLoading, setInstancesLoading] = useState(true);
 
-  // Query form
+  // 查询表单状态
   const [instanceId, setInstanceId] = useState("");
   const [conversationId, setConversationId] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -32,7 +32,7 @@ export default function SearchPage() {
   const [userId, setUserId] = useState("");
   const [requestId, setRequestId] = useState("");
 
-  // Results
+  // 搜索结果状态
   const [logs, setLogs] = useState<SpendLog[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -215,7 +215,7 @@ export default function SearchPage() {
         </CardContent>
       </Card>
 
-      {/* Results */}
+      {/* 搜索结果区域 */}
       {searched && (
         <div className="space-y-4">
           {loading ? (
@@ -231,7 +231,7 @@ export default function SearchPage() {
             </Card>
           ) : logs !== null && (
             <>
-              {/* Summary bar */}
+              {/* 汇总统计栏 */}
               <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2">
                   <List className="h-4 w-4 text-muted-foreground" />

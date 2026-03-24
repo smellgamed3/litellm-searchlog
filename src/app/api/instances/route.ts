@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Normalize baseUrl (remove trailing slash)
+  // 规范化 baseUrl（移除末尾斜杠）
   const normalizedUrl = baseUrl.replace(/\/$/, "");
 
   const instance = addInstance({

@@ -116,7 +116,7 @@ export function LogDetail({ log, index }: LogDetailProps) {
         <>
           <Separator />
           <CardContent className="pt-4 space-y-4">
-            {/* Metadata */}
+            {/* 基本元数据：调用类型、Token 用量、用户 */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
@@ -148,7 +148,7 @@ export function LogDetail({ log, index }: LogDetailProps) {
               </div>
             </div>
 
-            {/* Request Messages */}
+            {/* 请求消息内容 */}
             {messages !== undefined && messages !== null ? (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -170,7 +170,7 @@ export function LogDetail({ log, index }: LogDetailProps) {
               </div>
             )}
 
-            {/* Response */}
+            {/* 响应内容 */}
             {response !== undefined && response !== null ? (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -192,7 +192,7 @@ export function LogDetail({ log, index }: LogDetailProps) {
               </div>
             )}
 
-            {/* Metadata */}
+            {/* 元数据（metadata） */}
             {log.metadata && Object.keys(log.metadata).length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2">

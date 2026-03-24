@@ -38,20 +38,20 @@ export default function InstancesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Add dialog
+  // 新增实例弹窗状态
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState<FormData>(emptyForm);
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  // Edit dialog
+  // 编辑实例弹窗状态
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState<FormData>(emptyForm);
   const [editId, setEditId] = useState<string | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // Delete confirmation
+  // 删除确认弹窗状态
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -319,7 +319,7 @@ export default function InstancesPage() {
         </div>
       )}
 
-      {/* Edit dialog */}
+      {/* 编辑实例弹窗 */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader>
@@ -377,7 +377,7 @@ export default function InstancesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirmation dialog */}
+      {/* 删除确认弹窗 */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
